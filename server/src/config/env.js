@@ -27,6 +27,7 @@ export const env = {
   PORT: Number(process.env.PORT || 8080),
   // Default helps local dev; production should always set this explicitly.
   MONGODB_URI: optional('MONGODB_URI', 'mongodb://127.0.0.1:27017/ai_resume_builder'),
+  BRAND_NAME: optional('BRAND_NAME', 'AI Resume Builder'),
   JWT_SECRET: required('JWT_SECRET'),
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   CLIENT_ORIGIN: optional('CLIENT_ORIGIN', 'http://localhost:5173'),

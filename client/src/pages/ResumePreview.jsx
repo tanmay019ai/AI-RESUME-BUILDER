@@ -1,26 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/axios.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import { motion } from 'framer-motion';
-
-function Section({ title, children }) {
-  return (
-    <section className="mt-6">
-      <h2 className="text-xs font-semibold tracking-wider text-slate-500 dark:text-slate-400">{title}</h2>
-      <div className="mt-2">{children}</div>
-    </section>
-  );
-}
+import { AnimatePresence, motion } from 'framer-motion';
+import { TemplatePicker, TemplateRenderer } from '../templates/index.js';
 
 export default function ResumePreview() {
   const { id } = useParams();
   const { user } = useAuth();
+  const isPro = Boolean(user?.isPro);
   const [resume, setResume] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState('');
+  const [templateSaving, setTemplateSaving] = useState(false);
 
   async function extractErrorMessage(err) {
     const msg = err?.response?.data?.message || err?.message;
@@ -67,11 +61,28 @@ export default function ResumePreview() {
 
   const profile = resume?.content?.profile;
   const content = resume?.content?.ai;
+  const templateId = resume?.templateId || 'modern-clean';
 
-  const skillLine = useMemo(() => {
-    const skills = content?.skills || [];
-    return skills.join(' • ');
-  }, [content]);
+  async function changeTemplate(nextTemplateId) {
+    if (templateSaving) return;
+    const def = TEMPLATE_DEFS.find((t) => t.id === nextTemplateId);
+    const locked = !isPro && def && !def.free;
+    if (locked) {
+      setError('Upgrade to Pro to unlock this template.');
+      return;
+    }
+
+    setTemplateSaving(true);
+    setError('');
+    try {
+      const { data } = await api.patch(`/resumes/${id}/template`, { templateId: nextTemplateId });
+      setResume(data.resume);
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to change template');
+    } finally {
+      setTemplateSaving(false);
+    }
+  }
 
   async function downloadPdf() {
     setDownloading(true);
@@ -131,9 +142,22 @@ export default function ResumePreview() {
     }
   }
 
-  if (loading) return <div className="text-sm text-slate-500">Loading…</div>;
-  if (error) return <div className="text-sm text-red-600">{error}</div>;
-  if (!resume) return null;
+  if (loading)
+    return (
+      <div className="space-y-4">
+        <div className="h-7 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+        <div className="rounded-2xl border border-slate-200 bg-white/40 p-6 dark:border-slate-800 dark:bg-slate-950/20">
+          <div className="h-6 w-2/3 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+          <div className="mt-3 h-4 w-1/2 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+          <div className="mt-6 space-y-2">
+            <div className="h-3 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+            <div className="h-3 w-5/6 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+            <div className="h-3 w-4/6 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+          </div>
+        </div>
+      </div>
+    );
+  if (!resume) return <div className="text-sm text-red-600">{error || 'Resume not found'}</div>;
 
   return (
     <motion.div
@@ -149,15 +173,42 @@ export default function ResumePreview() {
             {user?.isPro ? 'Premium template (no watermark)' : 'Standard template (PDF has watermark)'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={downloadPdf}
-          disabled={downloading}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:opacity-60"
-        >
-          {downloading ? 'Preparing…' : 'Download PDF'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={downloadPdf}
+            disabled={downloading}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:opacity-60"
+          >
+            {downloading ? 'Preparing…' : 'Download PDF'}
+          </button>
+        </div>
       </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white/40 p-4 dark:border-slate-800 dark:bg-slate-950/20">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-sm font-medium">Choose a template</div>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">All 10 templates show a thumbnail preview.</p>
+          </div>
+          {templateSaving ? <div className="text-xs text-slate-500">Saving…</div> : null}
+        </div>
+
+        <div className="mt-4">
+          <TemplatePicker
+            value={templateId}
+            isPro={isPro}
+            onChange={(id) => changeTemplate(id)}
+            onLockedPick={() => setError('Upgrade to Pro to unlock this template.')}
+          />
+        </div>
+      </div>
+
+      {error ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+          {error}
+        </div>
+      ) : null}
 
       {downloadError ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
@@ -165,93 +216,25 @@ export default function ResumePreview() {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200 bg-white/60 p-6 backdrop-blur dark:border-slate-800 dark:bg-slate-950/40">
-        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-          <div>
-            <div className="text-2xl font-semibold tracking-tight">{profile?.fullName}</div>
-            {user?.isPro ? (
-              <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">{content?.headline}</div>
-            ) : null}
-          </div>
-          <div className="text-sm text-slate-700 dark:text-slate-300">
-            <div>{profile?.email}</div>
-            <div>{profile?.phone}</div>
-          </div>
-        </div>
-
-        <Section title="SUMMARY">
-          <p className="text-sm leading-6 text-slate-800 dark:text-slate-200">{content?.summary}</p>
-        </Section>
-
-        <Section title="SKILLS">
-          <p className="text-sm text-slate-800 dark:text-slate-200">{skillLine}</p>
-        </Section>
-
-        <Section title="EXPERIENCE">
-          <div className="space-y-4">
-            {(content?.experience || []).map((e, idx) => (
-              <div key={idx}>
-                <div className="flex items-baseline justify-between gap-3">
-                  <div className="text-sm font-medium">
-                    {e.title} — {e.company}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    {e.startDate} - {e.endDate}
-                  </div>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={templateId}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          transition={{ duration: 0.22 }}
+        >
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-white">
+            <div className="overflow-x-auto">
+              <div className="mx-auto w-full md:w-[210mm]">
+                <div className="min-h-[297mm] bg-white text-slate-900">
+                  <TemplateRenderer templateId={templateId} profile={profile} content={content} />
                 </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">{e.location}</div>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-800 dark:text-slate-200">
-                  {(e.bullets || []).map((b, i) => (
-                    <li key={i}>{b}</li>
-                  ))}
-                </ul>
               </div>
-            ))}
+            </div>
           </div>
-        </Section>
-
-        <Section title="PROJECTS">
-          <div className="space-y-4">
-            {(content?.projects || []).map((p, idx) => (
-              <div key={idx}>
-                <div className="text-sm font-medium">
-                  {p.name}{' '}
-                  {p.tech?.length ? (
-                    <span className="text-xs font-normal text-slate-500 dark:text-slate-400">({p.tech.join(', ')})</span>
-                  ) : null}
-                </div>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-800 dark:text-slate-200">
-                  {(p.bullets || []).map((b, i) => (
-                    <li key={i}>{b}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </Section>
-
-        <Section title="EDUCATION">
-          <div className="space-y-4">
-            {(content?.education || []).map((ed, idx) => (
-              <div key={idx}>
-                <div className="flex items-baseline justify-between gap-3">
-                  <div className="text-sm font-medium">
-                    {ed.school} — {ed.degree}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    {ed.startDate} - {ed.endDate}
-                  </div>
-                </div>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-800 dark:text-slate-200">
-                  {(ed.details || []).map((d, i) => (
-                    <li key={i}>{d}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </Section>
-      </div>
+        </motion.div>
+      </AnimatePresence>
     </motion.div>
   );
 }

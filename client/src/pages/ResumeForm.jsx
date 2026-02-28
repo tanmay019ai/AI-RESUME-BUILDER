@@ -2,19 +2,86 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/axios.js';
 import { motion } from 'framer-motion';
+import { useAuth } from '../context/AuthContext.jsx';
+import { TemplatePicker } from '../templates/index.js';
 
 function emptyProject() {
-  return { title: '', description: '' };
+  return { title: '', description: '', bulletInput: '', bullets: [] };
+}
+
+function BulletEditor({ label, value, items, onChange, placeholder = 'Add bullet', hint }) {
+  const [input, setInput] = useState('');
+
+  const list = Array.isArray(value) ? value : Array.isArray(items) ? items : [];
+
+  function add() {
+    const v = input.trim();
+    if (!v) return;
+    if (list.includes(v)) {
+      setInput('');
+      return;
+    }
+    onChange([...list, v]);
+    setInput('');
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+      <div className="text-sm font-medium">{label}</div>
+      <div className="mt-3 flex gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder={placeholder}
+          className="w-full rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-800"
+        />
+        <button
+          type="button"
+          onClick={add}
+          className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
+        >
+          Add
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {list.map((b) => (
+          <button
+            key={b}
+            type="button"
+            onClick={() => onChange(list.filter((x) => x !== b))}
+            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
+            title="Remove"
+          >
+            {b}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-slate-500">{hint || 'Click a bullet chip to remove.'}</p>
+    </div>
+  );
 }
 
 export default function ResumeForm() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isPro = Boolean(user?.isPro);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [targetRole, setTargetRole] = useState('');
   const [experience, setExperience] = useState('');
   const [education, setEducation] = useState('');
+
+  const [templateId, setTemplateId] = useState('modern-clean');
+  const [photoDataUrl, setPhotoDataUrl] = useState('');
+  const [experienceBullets, setExperienceBullets] = useState([]);
+  const [educationBullets, setEducationBullets] = useState([]);
 
   const [skillInput, setSkillInput] = useState('');
   const [skills, setSkills] = useState([]);
@@ -78,6 +145,52 @@ export default function ResumeForm() {
     setProjects((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function addProjectBullet(index) {
+    setProjects((prev) =>
+      prev.map((p, i) => {
+        if (i !== index) return p;
+        const v = (p.bulletInput || '').trim();
+        if (!v) return p;
+        if ((p.bullets || []).includes(v)) return { ...p, bulletInput: '' };
+        return { ...p, bulletInput: '', bullets: [...(p.bullets || []), v] };
+      })
+    );
+  }
+
+  function removeProjectBullet(index, bullet) {
+    setProjects((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, bullets: (p.bullets || []).filter((b) => b !== bullet) } : p))
+    );
+  }
+
+  async function onPhotoChange(file) {
+    if (!file) {
+      setPhotoDataUrl('');
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please upload a valid image file.');
+      return;
+    }
+
+    // Keep payload small; server also validates.
+    if (file.size > 300 * 1024) {
+      setError('Photo is too large. Please upload an image under 300KB.');
+      return;
+    }
+
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    setError('');
+    setPhotoDataUrl(dataUrl);
+  }
+
   async function onGenerate(e) {
     e.preventDefault();
     setError('');
@@ -92,15 +205,33 @@ export default function ResumeForm() {
       }
 
       const payload = {
+        templateId,
+        photoDataUrl: photoDataUrl || undefined,
         fullName,
         email,
         phone,
         targetRole,
-        experience,
-        education,
+        experience: [
+          experience,
+          experienceBullets.length ? `Highlights:\n${experienceBullets.map((b) => `- ${b}`).join('\n')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        education: [
+          education,
+          educationBullets.length ? `Details:\n${educationBullets.map((b) => `- ${b}`).join('\n')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
         skills: skillsToSend,
         projects: projects
-          .map((p) => ({ title: p.title.trim(), description: p.description.trim() }))
+          .map((p) => {
+            const title = p.title.trim();
+            const desc = p.description.trim();
+            const bullets = (p.bullets || []).map((b) => `- ${b}`).join('\n');
+            const combined = [desc, bullets ? `Highlights:\n${bullets}` : ''].filter(Boolean).join('\n\n');
+            return { title, description: combined };
+          })
           .filter((p) => p.title && p.description),
       };
 
@@ -134,6 +265,75 @@ export default function ResumeForm() {
       ) : null}
 
       <form onSubmit={onGenerate} className="space-y-5">
+        <div className="rounded-2xl border border-slate-200 p-5 dark:border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-medium">Templates</div>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Free plan: 3 templates. Pro plan: all 10 templates.
+              </p>
+            </div>
+            {!isPro ? (
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                Free
+              </span>
+            ) : (
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                Pro
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4">
+            <TemplatePicker
+              value={templateId}
+              isPro={isPro}
+              onChange={(id) => {
+                setError('');
+                setTemplateId(id);
+              }}
+              onLockedPick={() => {
+                setError('Upgrade to Pro to unlock this template.');
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 p-5 dark:border-slate-800">
+          <div className="font-medium">Profile Photo (optional)</div>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            This will appear in the resume preview and PDF for most templates.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-4">
+            <div className="h-16 w-16 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+              {photoDataUrl ? (
+                <img src={photoDataUrl} alt="Profile" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">No photo</div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => onPhotoChange(e.target.files?.[0])}
+                className="text-sm"
+              />
+              {photoDataUrl ? (
+                <button
+                  type="button"
+                  onClick={() => setPhotoDataUrl('')}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
+                >
+                  Remove
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Tip: upload a square photo under 300KB.</p>
+        </div>
+
         <div className="grid gap-4 md:grid-cols-2">
           <div>
             <label className="text-sm">Full name</label>
@@ -240,6 +440,7 @@ export default function ResumeForm() {
                     </button>
                   ) : null}
                 </div>
+
                 <div className="mt-3 grid gap-3">
                   <div>
                     <label className="text-sm">Title</label>
@@ -249,6 +450,7 @@ export default function ResumeForm() {
                       className="mt-1 w-full rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-800"
                     />
                   </div>
+
                   <div>
                     <label className="text-sm">Description</label>
                     <textarea
@@ -257,6 +459,47 @@ export default function ResumeForm() {
                       rows={3}
                       className="mt-1 w-full rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-800"
                     />
+                  </div>
+
+                  <div>
+                    <label className="text-sm">Project bullets</label>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        value={p.bulletInput || ''}
+                        onChange={(e) => setProjectField(idx, 'bulletInput', e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addProjectBullet(idx);
+                          }
+                        }}
+                        placeholder="e.g. Reduced API latency by 35%"
+                        className="w-full rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-800"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => addProjectBullet(idx)}
+                        className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
+                      >
+                        Add
+                      </button>
+                    </div>
+
+                    {p.bullets?.length ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {p.bullets.map((b) => (
+                          <button
+                            key={b}
+                            type="button"
+                            onClick={() => removeProjectBullet(idx, b)}
+                            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
+                            title="Remove"
+                          >
+                            {b}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -274,6 +517,15 @@ export default function ResumeForm() {
             className="mt-3 w-full rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-800"
             required
           />
+          <div className="mt-4">
+            <BulletEditor
+              label="Experience bullets"
+              value={experienceBullets}
+              onChange={setExperienceBullets}
+              placeholder="e.g. Increased conversion rate by 18%"
+              hint="Optional. These will be appended under Experience." 
+            />
+          </div>
         </div>
 
         <div className="rounded-2xl border border-slate-200 p-5 dark:border-slate-800">
@@ -286,6 +538,15 @@ export default function ResumeForm() {
             className="mt-3 w-full rounded-lg border border-slate-200 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400 dark:border-slate-800"
             required
           />
+          <div className="mt-4">
+            <BulletEditor
+              label="Education bullets"
+              value={educationBullets}
+              onChange={setEducationBullets}
+              placeholder="e.g. Relevant coursework: DBMS, OS, CN"
+              hint="Optional. These will be appended under Education." 
+            />
+          </div>
         </div>
 
         <button
